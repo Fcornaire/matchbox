@@ -136,14 +136,14 @@ mod tests {
     use tokio_tungstenite::{tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
     fn app() -> SignalingServer {
-        let mut state = ServerState::default();
+        let state = ServerState::default();
         SignalingServerBuilder::new(
             (Ipv4Addr::LOCALHOST, 0),
             MatchmakingDemoTopology,
             state.clone(),
         )
         .on_connection_request({
-            let mut state = state.clone();
+            let state = state.clone();
             move |connection| {
                 let room_id = RoomId(connection.path.clone().unwrap_or_default());
                 let next = connection
@@ -151,9 +151,7 @@ mod tests {
                     .get("next")
                     .and_then(|next| next.parse::<usize>().ok());
                 let room = RequestedRoom { id: room_id, next };
-                {
-                    state.add_waiting_client(connection.origin, room);
-                }
+                state.add_waiting_client(connection.origin, room);
                 Ok(true)
             }
         })
