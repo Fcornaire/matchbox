@@ -1,6 +1,10 @@
 mod args;
+mod constants;
+mod jobs;
 mod state;
 mod topology;
+
+use std::sync::Arc;
 
 use crate::{
     state::{RequestedRoom, RoomId, ServerState},
@@ -9,6 +13,7 @@ use crate::{
 use args::Args;
 use axum::{http::StatusCode, response::IntoResponse, routing::get};
 use clap::Parser;
+use jobs::spawn_jobs;
 use matchbox_signaling::SignalingServerBuilder;
 use tracing::info;
 use tracing_subscriber::prelude::*;
@@ -36,10 +41,11 @@ async fn main() {
     // Setup router
     info!("Matchbox Signaling Server: {}", args.host);
 
-    let mut state = ServerState::default();
-    let server = SignalingServerBuilder::new(args.host, MatchmakingDemoTopology, state.clone())
+    let state = Arc::new(ServerState::default());
+    let clone = state.clone();
+    let server = SignalingServerBuilder::new(args.host, MatchmakingDemoTopology, (*state).clone())
         .on_connection_request({
-            let mut state = state.clone();
+            let state = state.clone();
             move |connection| {
                 let room_id = RoomId(connection.path.clone().unwrap_or_default());
                 let next = connection
@@ -61,10 +67,23 @@ async fn main() {
         .trace()
         .mutate_router(|router| router.route("/health", get(health_handler)))
         .build();
-    server
-        .serve()
-        .await
-        .expect("Unable to run signaling server, is it already running?")
+
+    let mut server_task = tokio::spawn(async move {
+        server
+            .serve()
+            .await
+            .expect("Unable to run signaling server, is it already running?")
+    });
+
+    let mut jobs_task = tokio::spawn(async move {
+        tracing::info!("[Main] Jobs started");
+        spawn_jobs(clone).await;
+    });
+
+    tokio::select! {
+        _ = (&mut server_task) => { jobs_task.abort() },
+        _ = (&mut jobs_task) => { server_task.abort() },
+    }
 }
 
 pub async fn health_handler() -> impl IntoResponse {

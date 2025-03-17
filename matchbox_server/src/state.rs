@@ -27,6 +27,19 @@ pub(crate) struct Peer {
     pub sender: UnboundedSender<Result<Message, Error>>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Metrics {
+    clients: usize,
+    rooms: usize,
+}
+
+impl Metrics {
+    pub fn update(&mut self, clients: usize, rooms: usize) {
+        self.clients = clients;
+        self.rooms = rooms;
+    }
+}
+
 #[derive(Default, Debug, Clone)]
 pub(crate) struct ServerState {
     clients_waiting: StateObj<HashMap<SocketAddr, RequestedRoom>>,
@@ -34,17 +47,18 @@ pub(crate) struct ServerState {
     clients: StateObj<HashMap<PeerId, Peer>>,
     rooms: StateObj<HashMap<RequestedRoom, HashSet<PeerId>>>,
     matched_by_next: StateObj<HashSet<Vec<PeerId>>>,
+    metrics: StateObj<Metrics>,
 }
 impl SignalingState for ServerState {}
 
 impl ServerState {
     /// Add a waiting client to matchmaking
-    pub fn add_waiting_client(&mut self, origin: SocketAddr, room: RequestedRoom) {
+    pub fn add_waiting_client(&self, origin: SocketAddr, room: RequestedRoom) {
         self.clients_waiting.lock().unwrap().insert(origin, room);
     }
 
     /// Assign a peer id to a waiting client
-    pub fn assign_id_to_waiting_client(&mut self, origin: SocketAddr, peer_id: PeerId) {
+    pub fn assign_id_to_waiting_client(&self, origin: SocketAddr, peer_id: PeerId) {
         let room = {
             let mut lock = self.clients_waiting.lock().unwrap();
             lock.remove(&origin).expect("waiting client")
@@ -157,5 +171,17 @@ impl ServerState {
             Some(peer) => Ok(common_logic::try_send(&peer.sender, message)?),
             None => Err(SignalingError::UnknownPeer),
         }
+    }
+
+    ///Update Metrics
+    pub fn update_metrics(&self) {
+        let clients = self.clients.lock().unwrap().len();
+        let rooms = self.rooms.lock().unwrap().len();
+        self.metrics.lock().unwrap().update(clients, rooms);
+    }
+
+    //Get metrics
+    pub fn get_metrics(&self) -> Metrics {
+        self.metrics.lock().unwrap().clone()
     }
 }
