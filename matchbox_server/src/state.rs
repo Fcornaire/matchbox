@@ -10,6 +10,7 @@ use std::{
     net::SocketAddr,
 };
 use tokio::sync::mpsc::UnboundedSender;
+use tracing::info;
 
 #[derive(Debug, Deserialize, Default, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct RoomId(pub String);
@@ -160,6 +161,15 @@ impl ServerState {
                 .unwrap()
                 .get_mut(&peer.room)
                 .map(|room| room.remove(peer_id));
+
+            // If room is empty, remove it
+            let mut rooms_lock = self.rooms.lock().unwrap();
+            if let Some(room) = rooms_lock.get(&peer.room) {
+                if room.is_empty() {
+                    info!("Removing empty room {:?}", peer.room);
+                    rooms_lock.remove(&peer.room);
+                }
+            }
         }
         peer
     }
