@@ -43,30 +43,35 @@ async fn main() {
 
     let state = Arc::new(ServerState::default());
     let clone = state.clone();
-    let server = SignalingServerBuilder::new(args.host, MatchmakingDemoTopology, (*state).clone())
-        .on_connection_request({
-            let state = state.clone();
-            move |connection| {
-                let room_id = RoomId(connection.path.clone().unwrap_or_default());
-                let next = connection
-                    .query_params
-                    .get("next")
-                    .and_then(|next| next.parse::<usize>().ok());
-                let room = RequestedRoom { id: room_id, next };
-                state.add_waiting_client(connection.origin, room);
-                Ok(true) // allow all clients
-            }
-        })
-        .on_id_assignment({
-            move |(origin, peer_id)| {
-                info!("Client connected {origin:?}: {peer_id:?}");
-                state.assign_id_to_waiting_client(origin, peer_id);
-            }
-        })
-        .cors()
-        .trace()
-        .mutate_router(|router| router.route("/health", get(health_handler)))
-        .build();
+    let server = SignalingServerBuilder::new(
+        args.host,
+        MatchmakingDemoTopology,
+        (*state).clone(),
+        args.integrity_hash,
+    )
+    .on_connection_request({
+        let state = state.clone();
+        move |connection| {
+            let room_id = RoomId(connection.path.clone().unwrap_or_default());
+            let next = connection
+                .query_params
+                .get("next")
+                .and_then(|next| next.parse::<usize>().ok());
+            let room = RequestedRoom { id: room_id, next };
+            state.add_waiting_client(connection.origin, room);
+            Ok(true) // allow all clients
+        }
+    })
+    .on_id_assignment({
+        move |(origin, peer_id)| {
+            info!("Client connected {origin:?}: {peer_id:?}");
+            state.assign_id_to_waiting_client(origin, peer_id);
+        }
+    })
+    .cors()
+    .trace()
+    .mutate_router(|router| router.route("/health", get(health_handler)))
+    .build();
 
     let mut server_task = tokio::spawn(async move {
         server

@@ -10,7 +10,7 @@ use async_compat::CompatExt;
 use async_trait::async_trait;
 use async_tungstenite::{
     async_std::{connect_async, ConnectStream},
-    tungstenite::Message,
+    tungstenite::{client::IntoClientRequest, Message},
     WebSocketStream,
 };
 use bytes::Bytes;
@@ -44,9 +44,20 @@ pub(crate) struct NativeSignaller {
 
 #[async_trait]
 impl Signaller for NativeSignaller {
-    async fn new(mut attempts: Option<u16>, room_url: &str) -> Result<Self, SignalingError> {
+    async fn new(
+        mut attempts: Option<u16>,
+        room_url: &str,
+        integrity_hash: Option<String>,
+    ) -> Result<Self, SignalingError> {
         let websocket_stream = 'signaling: loop {
-            match connect_async(room_url).await.map_err(SignalingError::from) {
+            let mut req = room_url.into_client_request()?;
+
+            if let Some(hash) = integrity_hash.clone() {
+                req.headers_mut()
+                    .insert("x-Integrity-Hash", hash.parse().unwrap());
+            }
+
+            match connect_async(req).await.map_err(SignalingError::from) {
                 Ok((wss, _)) => break wss,
                 Err(e) => {
                     if let Some(attempts) = attempts.as_mut() {

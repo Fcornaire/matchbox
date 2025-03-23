@@ -44,6 +44,8 @@ where
 
     /// Arbitrary state accompanying a server
     pub(crate) state: S,
+
+    pub(crate) integrity_hash: Option<String>,
 }
 
 impl<Topology, Cb, S> SignalingServerBuilder<Topology, Cb, S>
@@ -53,7 +55,12 @@ where
     S: SignalingState,
 {
     /// Creates a new builder for a [`SignalingServer`].
-    pub fn new(socket_addr: impl Into<SocketAddr>, topology: Topology, state: S) -> Self {
+    pub fn new(
+        socket_addr: impl Into<SocketAddr>,
+        topology: Topology,
+        state: S,
+        integrity_hash: Option<String>,
+    ) -> Self {
         Self {
             socket_addr: socket_addr.into(),
             router: Router::new(),
@@ -61,6 +68,7 @@ where
             callbacks: Cb::default(),
             topology,
             state,
+            integrity_hash,
         }
     }
 
@@ -131,7 +139,8 @@ where
                 .layer(Extension(state_machine))
                 .layer(Extension(self.shared_callbacks))
                 .layer(Extension(self.callbacks))
-                .layer(Extension(self.state)),
+                .layer(Extension(self.state))
+                .layer(Extension(self.integrity_hash)),
         )
         .into_make_service_with_connect_info::<SocketAddr>();
         SignalingServer {

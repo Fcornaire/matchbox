@@ -41,7 +41,11 @@ cfg_if! {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 trait Signaller: Sized {
-    async fn new(mut attempts: Option<u16>, room_url: &str) -> Result<Self, SignalingError>;
+    async fn new(
+        mut attempts: Option<u16>,
+        room_url: &str,
+        integrity_hash: Option<String>,
+    ) -> Result<Self, SignalingError>;
 
     async fn send(&mut self, request: String) -> Result<(), SignalingError>;
 
@@ -53,8 +57,9 @@ async fn signaling_loop<S: Signaller>(
     room_url: String,
     mut requests_receiver: futures_channel::mpsc::UnboundedReceiver<PeerRequest>,
     events_sender: futures_channel::mpsc::UnboundedSender<PeerEvent>,
+    integrity_hash: Option<String>,
 ) -> Result<(), SignalingError> {
-    let mut signaller = S::new(attempts, &room_url).await?;
+    let mut signaller = S::new(attempts, &room_url, integrity_hash).await?;
 
     loop {
         select! {
