@@ -105,6 +105,7 @@ impl SignallerBuilder for IrohGossipSignallerBuilder {
         &self,
         _attempts: Option<u16>,
         room_url: String,
+        _integrity_hash: Option<String>,
     ) -> Result<Box<dyn Signaller>, SignalingError> {
         let room_pubkey: Option<PublicKey> = if room_url.is_empty() {
             None

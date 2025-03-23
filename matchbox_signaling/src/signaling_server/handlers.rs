@@ -18,7 +18,7 @@ use futures::{StreamExt, stream::SplitStream};
 use hyper::{HeaderMap, StatusCode};
 use matchbox_protocol::{JsonPeerEvent, PeerId};
 use std::{collections::HashMap, net::SocketAddr};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 /// Metastate used during by a signaling server's runtime
 pub struct WsStateMeta<Cb, S> {
@@ -58,12 +58,26 @@ pub(crate) async fn ws_handler<Cb, S>(
     Extension(state): Extension<S>,
     Extension(state_machine): Extension<SignalingStateMachine<Cb, S>>,
     ConnectInfo(origin): ConnectInfo<SocketAddr>,
+    Extension(integrity_hash): Extension<Option<String>>,
 ) -> impl IntoResponse
 where
     Cb: SignalingCallbacks,
     S: SignalingState,
 {
     info!("`{origin}` connected.");
+
+    let client_integrity_hash = headers
+        .get("x-Integrity-Hash")
+        .and_then(|h| h.to_str().ok())
+        .map(|h| h.to_string());
+
+    //if not the same as the server integrity hash, return unauthorized
+    if let Some(server_integrity_hash) = integrity_hash {
+        if client_integrity_hash != Some(server_integrity_hash.clone()) {
+            warn!("Client integrity hash does not match server integrity hash. Client: {client_integrity_hash:?}");
+            return (StatusCode::UNAUTHORIZED).into_response();
+        }
+    }
 
     let path = path.map(|path| path.0);
 

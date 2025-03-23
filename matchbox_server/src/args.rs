@@ -10,4 +10,8 @@ use std::net::SocketAddr;
 pub struct Args {
     #[clap(default_value = "0.0.0.0:3536", env)]
     pub host: SocketAddr,
+
+    //add optionnal integrity_hash
+    #[clap(long, env)]
+    pub integrity_hash: Option<String>,
 }

@@ -52,6 +52,7 @@ pub trait SignallerBuilder: std::fmt::Debug + Sync + Send + 'static {
         &self,
         attempts: Option<u16>,
         room_url: String,
+        integrity_hash: Option<String>,
     ) -> Result<Box<dyn Signaller>, SignalingError>;
 }
 
@@ -92,8 +93,11 @@ async fn signaling_loop(
     room_url: String,
     mut requests_receiver: futures_channel::mpsc::UnboundedReceiver<PeerRequest>,
     events_sender: futures_channel::mpsc::UnboundedSender<PeerEvent>,
+    integrity_hash: Option<String>,
 ) -> Result<(), SignalingError> {
-    let mut signaller = builder.new_signaller(attempts, room_url).await?;
+    let mut signaller = builder
+        .new_signaller(attempts, room_url, integrity_hash)
+        .await?;
 
     loop {
         select! {

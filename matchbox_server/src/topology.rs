@@ -146,6 +146,7 @@ mod tests {
             (Ipv4Addr::LOCALHOST, 0),
             MatchmakingDemoTopology,
             state.clone(),
+            None,
         )
         .on_connection_request({
             let state = state.clone();

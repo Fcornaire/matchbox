@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use async_tungstenite::{
     WebSocketStream,
     async_std::{ConnectStream, connect_async},
-    tungstenite::Message,
+    tungstenite::{Message, client::IntoClientRequest},
 };
 use bytes::Bytes;
 use futures::{
@@ -54,9 +54,20 @@ impl SignallerBuilder for NativeSignallerBuilder {
         &self,
         mut attempts: Option<u16>,
         room_url: String,
+        integrity_hash: Option<String>,
     ) -> Result<Box<dyn Signaller>, SignalingError> {
         let websocket_stream = 'signaling: loop {
-            match connect_async(&room_url).await.map_err(SignalingError::from) {
+            let mut req = room_url
+                .clone()
+                .into_client_request()
+                .map_err(SignalingError::from)?;
+
+            if let Some(hash) = integrity_hash.clone() {
+                req.headers_mut()
+                    .insert("x-Integrity-Hash", hash.parse().unwrap());
+            }
+
+            match connect_async(req).await.map_err(SignalingError::from) {
                 Ok((wss, _)) => break wss,
                 Err(e) => {
                     if let Some(attempts) = attempts.as_mut() {

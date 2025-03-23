@@ -39,6 +39,7 @@ impl SignallerBuilder for WasmSignallerBuilder {
         &self,
         mut attempts: Option<u16>,
         room_url: String,
+        _integrity_hash: Option<String>,
     ) -> Result<Box<dyn Signaller>, SignalingError> {
         let websocket_stream = 'signaling: loop {
             match WsMeta::connect(&room_url, None)

@@ -99,6 +99,8 @@ pub(crate) struct SocketConfig {
     pub(crate) attempts: Option<u16>,
     /// Interval at which to send empty requests to the signaling server
     pub(crate) keep_alive_interval: Option<Duration>,
+
+    pub(crate) integrity_hash: Option<String>,
 }
 
 /// Builder for [`WebRtcSocket`]s.
@@ -126,9 +128,16 @@ impl WebRtcSocketBuilder {
                 channels: Vec::default(),
                 attempts: Some(3),
                 keep_alive_interval: Some(Duration::from_secs(10)),
+                integrity_hash: None,
             },
             signaller_builder: None,
         }
+    }
+
+    /// Sets the hash integrity value for the socket configuration.
+    pub fn integrity_hash(mut self, integrity_hash: String) -> Self {
+        self.config.integrity_hash = Some(integrity_hash);
+        self
     }
 
     /// Sets the socket ICE server configuration.
@@ -218,6 +227,8 @@ impl WebRtcSocketBuilder {
             .signaller_builder
             .unwrap_or_else(|| Arc::new(UseSignallerBuilder::default()));
 
+        let integrity_hash = self.config.integrity_hash.clone();
+
         let socket_fut = run_socket(
             signaller_builder,
             id_tx,
@@ -225,6 +236,7 @@ impl WebRtcSocketBuilder {
             peer_messages_out_rx,
             peer_state_tx,
             messages_from_peers_tx,
+            integrity_hash,
         )
         // Transform the source into a user-error.
         .map(|f| {
@@ -718,6 +730,7 @@ async fn run_socket(
     peer_messages_out_rx: Vec<futures_channel::mpsc::UnboundedReceiver<(PeerId, Packet)>>,
     peer_state_tx: futures_channel::mpsc::UnboundedSender<(PeerId, PeerState)>,
     messages_from_peers_tx: Vec<futures_channel::mpsc::UnboundedSender<(PeerId, Packet)>>,
+    integrity_hash: Option<String>,
 ) -> Result<(), SignalingError> {
     debug!("Starting WebRtcSocket");
 
@@ -730,6 +743,7 @@ async fn run_socket(
         config.room_url,
         requests_receiver,
         events_sender,
+        integrity_hash.clone(),
     );
 
     let channels = MessageLoopChannels {
