@@ -4,6 +4,7 @@ use matchbox_signaling::{
     SignalingError, SignalingState,
     common_logic::{self, StateObj},
 };
+use metrics::{counter, gauge};
 use serde::Deserialize;
 use std::{
     collections::{HashMap, HashSet},
@@ -28,19 +29,6 @@ pub(crate) struct Peer {
     pub sender: UnboundedSender<Result<Message, Error>>,
 }
 
-#[derive(Debug, Clone, Default)]
-pub(crate) struct Metrics {
-    clients: usize,
-    rooms: usize,
-}
-
-impl Metrics {
-    pub fn update(&mut self, clients: usize, rooms: usize) {
-        self.clients = clients;
-        self.rooms = rooms;
-    }
-}
-
 #[derive(Default, Debug, Clone)]
 pub(crate) struct ServerState {
     clients_waiting: StateObj<HashMap<SocketAddr, RequestedRoom>>,
@@ -48,7 +36,6 @@ pub(crate) struct ServerState {
     clients: StateObj<HashMap<PeerId, Peer>>,
     rooms: StateObj<HashMap<RequestedRoom, HashSet<PeerId>>>,
     matched_by_next: StateObj<HashSet<Vec<PeerId>>>,
-    metrics: StateObj<Metrics>,
 }
 impl SignalingState for ServerState {}
 
@@ -100,6 +87,8 @@ impl ServerState {
                     let mut updated_peers = peers.clone();
                     updated_peers.insert(peer_id);
                     matched_by_next.insert(updated_peers.into_iter().collect());
+
+                    counter!(crate::telemetry::MATCHES_TOTAL).increment(1);
 
                     peers.clear(); // room is complete
                 } else {
@@ -183,15 +172,15 @@ impl ServerState {
         }
     }
 
-    ///Update Metrics
-    pub fn update_metrics(&self) {
-        let clients = self.clients.lock().unwrap().len();
+    pub fn publish_metrics_gauges(&self) {
+        let connections = self.clients.lock().unwrap().len();
         let rooms = self.rooms.lock().unwrap().len();
-        self.metrics.lock().unwrap().update(clients, rooms);
-    }
+        let in_queue = self.clients_in_queue.lock().unwrap().len();
+        let matched_groups = self.matched_by_next.lock().unwrap().len();
 
-    //Get metrics
-    pub fn get_metrics(&self) -> Metrics {
-        self.metrics.lock().unwrap().clone()
+        gauge!(crate::telemetry::CONNECTIONS_ACTIVE).set(connections as f64);
+        gauge!(crate::telemetry::ROOMS).set(rooms as f64);
+        gauge!(crate::telemetry::CLIENTS_IN_QUEUE).set(in_queue as f64);
+        gauge!(crate::telemetry::MATCHED_GROUPS).set(matched_groups as f64);
     }
 }

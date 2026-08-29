@@ -1,7 +1,6 @@
 mod args;
-mod constants;
-mod jobs;
 mod state;
+mod telemetry;
 mod topology;
 
 use std::sync::Arc;
@@ -13,8 +12,8 @@ use crate::{
 use args::Args;
 use axum::{http::StatusCode, response::IntoResponse, routing::get};
 use clap::Parser;
-use jobs::spawn_jobs;
 use matchbox_signaling::SignalingServerBuilder;
+use metrics::counter;
 use tracing::info;
 use tracing_subscriber::prelude::*;
 
@@ -38,11 +37,19 @@ async fn main() {
     setup_logging();
     let args = Args::parse();
 
+    let metrics_handle = telemetry::install();
+
     // Setup router
     info!("Matchbox Signaling Server: {}", args.host);
 
     let state = Arc::new(ServerState::default());
-    let clone = state.clone();
+
+    tokio::spawn(telemetry::serve(
+        (*state).clone(),
+        metrics_handle,
+        args.metrics,
+    ));
+
     let server = SignalingServerBuilder::new(
         args.host,
         MatchmakingDemoTopology,
@@ -52,6 +59,8 @@ async fn main() {
     .on_connection_request({
         let state = state.clone();
         move |connection| {
+            counter!(telemetry::CONNECTION_REQUESTS_TOTAL).increment(1);
+
             let room_id = RoomId(connection.path.clone().unwrap_or_default());
             let next = connection
                 .query_params
@@ -73,22 +82,10 @@ async fn main() {
     .mutate_router(|router| router.route("/health", get(health_handler)))
     .build();
 
-    let mut server_task = tokio::spawn(async move {
-        server
-            .serve()
-            .await
-            .expect("Unable to run signaling server, is it already running?")
-    });
-
-    let mut jobs_task = tokio::spawn(async move {
-        tracing::info!("[Main] Jobs started");
-        spawn_jobs(clone).await;
-    });
-
-    tokio::select! {
-        _ = (&mut server_task) => { jobs_task.abort() },
-        _ = (&mut jobs_task) => { server_task.abort() },
-    }
+    server
+        .serve()
+        .await
+        .expect("Unable to run signaling server, is it already running?")
 }
 
 pub async fn health_handler() -> impl IntoResponse {
