@@ -23,6 +23,8 @@ matchbox_protocol = { version = "0.11", path = "../matchbox_protocol", features 
 ] }
 async-trait = "0.1"
 axum = { version = "0.7", features = ["ws"] }
+metrics = { version = "0.24.1", default-features = false }
+metrics-exporter-prometheus = { version = "0.16.2", default-features = false }
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }

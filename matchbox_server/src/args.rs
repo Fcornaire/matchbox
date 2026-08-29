@@ -11,7 +11,9 @@ pub struct Args {
     #[clap(default_value = "0.0.0.0:3536", env)]
     pub host: SocketAddr,
 
-    //add optionnal integrity_hash
+    #[clap(default_value = "0.0.0.0:3738", env)]
+    pub metrics: SocketAddr,
+
     #[clap(long, env)]
     pub integrity_hash: Option<String>,
 }

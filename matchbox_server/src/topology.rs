@@ -6,7 +6,11 @@ use matchbox_protocol::{JsonPeerEvent, PeerRequest};
 use matchbox_signaling::{
     common_logic::parse_request, ClientRequestError, NoCallbacks, SignalingTopology, WsStateMeta,
 };
+use metrics::{counter, histogram};
+use std::time::Instant;
 use tracing::{error, info, warn};
+
+use crate::telemetry;
 
 #[derive(Debug, Default)]
 pub struct MatchmakingDemoTopology;
@@ -29,12 +33,15 @@ impl SignalingTopology<NoCallbacks, ServerState> for MatchmakingDemoTopology {
             room,
         };
 
+        let connected_at = Instant::now();
+
         // Tell other waiting peers about me!
         let peers = state.add_peer(peer);
         let event_text = JsonPeerEvent::NewPeer(peer_id).to_string();
         let event = Message::Text(event_text.clone());
         for peer_id in peers {
             if let Err(e) = state.try_send(peer_id, event.clone()) {
+                counter!(telemetry::SIGNALING_ERRORS_TOTAL, "kind" => "relay_send").increment(1);
                 error!("error sending to {peer_id:?}: {e:?}");
             } else {
                 info!("{peer_id} -> {event_text:?}");
@@ -49,6 +56,8 @@ impl SignalingTopology<NoCallbacks, ServerState> for MatchmakingDemoTopology {
                     match e {
                         ClientRequestError::Axum(_) => {
                             // Most likely a ConnectionReset or similar.
+                            counter!(telemetry::SIGNALING_ERRORS_TOTAL, "kind" => "socket")
+                                .increment(1);
                             warn!("Unrecoverable error with {peer_id:?}: {e:?}");
                             break;
                         }
@@ -57,6 +66,8 @@ impl SignalingTopology<NoCallbacks, ServerState> for MatchmakingDemoTopology {
                             break;
                         }
                         ClientRequestError::Json(_) | ClientRequestError::UnsupportedType(_) => {
+                            counter!(telemetry::SIGNALING_ERRORS_TOTAL, "kind" => "bad_request")
+                                .increment(1);
                             error!("Error with request: {:?}", e);
                             continue; // Recoverable error
                         }
@@ -75,9 +86,13 @@ impl SignalingTopology<NoCallbacks, ServerState> for MatchmakingDemoTopology {
                     );
                     if let Some(peer) = state.get_peer(&receiver) {
                         if let Err(e) = peer.sender.send(Ok(event)) {
+                            counter!(telemetry::SIGNALING_ERRORS_TOTAL, "kind" => "relay_send")
+                                .increment(1);
                             error!("error sending signal event: {e:?}");
                         }
                     } else {
+                        counter!(telemetry::SIGNALING_ERRORS_TOTAL, "kind" => "unknown_peer")
+                            .increment(1);
                         warn!("peer not found ({receiver:?}), ignoring signal");
                     }
                 }
@@ -87,6 +102,9 @@ impl SignalingTopology<NoCallbacks, ServerState> for MatchmakingDemoTopology {
                 }
             }
         }
+
+        histogram!(telemetry::CONNECTION_DURATION_SECONDS)
+            .record(connected_at.elapsed().as_secs_f64());
 
         // Peer disconnected or otherwise ended communication.
         info!("Removing peer: {:?}", peer_id);
@@ -106,14 +124,22 @@ impl SignalingTopology<NoCallbacks, ServerState> for MatchmakingDemoTopology {
                 for matched in matcheds {
                     match state.try_send(matched, event.clone()) {
                         Ok(()) => info!("Sent peer remove to: {:?}", peer_id),
-                        Err(e) => error!("Failure sending peer remove: {e:?}"),
+                        Err(e) => {
+                            counter!(telemetry::SIGNALING_ERRORS_TOTAL, "kind" => "relay_send")
+                                .increment(1);
+                            error!("Failure sending peer remove: {e:?}")
+                        }
                     }
                 }
             } else {
                 for peer_id in other_peers {
                     match state.try_send(peer_id, event.clone()) {
                         Ok(()) => info!("Sent peer remove to: {:?}", peer_id),
-                        Err(e) => error!("Failure sending peer remove: {e:?}"),
+                        Err(e) => {
+                            counter!(telemetry::SIGNALING_ERRORS_TOTAL, "kind" => "relay_send")
+                                .increment(1);
+                            error!("Failure sending peer remove: {e:?}")
+                        }
                     }
                 }
             }
