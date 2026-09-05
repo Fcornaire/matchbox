@@ -27,12 +27,19 @@ pub(crate) struct Peer {
     pub uuid: PeerId,
     pub room: RequestedRoom,
     pub sender: UnboundedSender<Result<Message, Error>>,
+    pub is_relay: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WaitingClient {
+    pub room: RequestedRoom,
+    pub is_relay: bool,
 }
 
 #[derive(Default, Debug, Clone)]
 pub(crate) struct ServerState {
-    clients_waiting: StateObj<HashMap<SocketAddr, RequestedRoom>>,
-    clients_in_queue: StateObj<HashMap<PeerId, RequestedRoom>>,
+    clients_waiting: StateObj<HashMap<SocketAddr, WaitingClient>>,
+    clients_in_queue: StateObj<HashMap<PeerId, WaitingClient>>,
     clients: StateObj<HashMap<PeerId, Peer>>,
     rooms: StateObj<HashMap<RequestedRoom, HashSet<PeerId>>>,
     matched_by_next: StateObj<HashSet<Vec<PeerId>>>,
@@ -41,8 +48,11 @@ impl SignalingState for ServerState {}
 
 impl ServerState {
     /// Add a waiting client to matchmaking
-    pub fn add_waiting_client(&self, origin: SocketAddr, room: RequestedRoom) {
-        self.clients_waiting.lock().unwrap().insert(origin, room);
+    pub fn add_waiting_client(&self, origin: SocketAddr, room: RequestedRoom, is_relay: bool) {
+        self.clients_waiting
+            .lock()
+            .unwrap()
+            .insert(origin, WaitingClient { room, is_relay });
     }
 
     /// Assign a peer id to a waiting client
@@ -57,8 +67,8 @@ impl ServerState {
         }
     }
 
-    /// Remove the waiting peer, returning the peer's requested room
-    pub fn remove_waiting_peer(&mut self, peer_id: PeerId) -> RequestedRoom {
+    /// Remove the waiting peer, returning the peer's requested room and relay flag
+    pub fn remove_waiting_peer(&mut self, peer_id: PeerId) -> WaitingClient {
         {
             let mut lock = self.clients_in_queue.lock().unwrap();
             lock.remove(&peer_id).expect("waiting peer")

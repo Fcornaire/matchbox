@@ -15,4 +15,11 @@ pub enum PeerSignal {
     Offer(String),
     /// Answer
     Answer(String),
+    /// An application packet for `channel`, relayed through the signaling server
+    Relay {
+        /// Index of the data channel the packet belongs to
+        channel: usize,
+        /// The packet bytes
+        data: Vec<u8>,
+    },
 }

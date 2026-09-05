@@ -2,13 +2,13 @@ use crate::state::{Peer, ServerState};
 use async_trait::async_trait;
 use axum::extract::ws::Message;
 use futures::StreamExt;
-use matchbox_protocol::{JsonPeerEvent, PeerRequest};
+use matchbox_protocol::{JsonPeerEvent, PeerId, PeerRequest};
 use matchbox_signaling::{
     ClientRequestError, NoCallbacks, SignalingTopology, WsStateMeta, common_logic::parse_request,
 };
 use metrics::{counter, histogram};
 use std::time::Instant;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::telemetry;
 
@@ -26,25 +26,40 @@ impl SignalingTopology<NoCallbacks, ServerState> for MatchmakingDemoTopology {
             ..
         } = upgrade;
 
-        let room = state.remove_waiting_peer(peer_id);
+        let waiting = state.remove_waiting_peer(peer_id);
+        let is_relay = waiting.is_relay;
         let peer = Peer {
             uuid: peer_id,
             sender: sender.clone(),
-            room,
+            room: waiting.room,
+            is_relay,
         };
 
         let connected_at = Instant::now();
 
         // Tell other waiting peers about me!
         let peers = state.add_peer(peer);
-        let event_text = JsonPeerEvent::NewPeer(peer_id).to_string();
-        let event = Message::Text((&event_text).into());
-        for peer_id in peers {
-            if let Err(e) = state.try_send(peer_id, event.clone()) {
+        let announce = |target: PeerId, event: JsonPeerEvent| {
+            let event_text = event.to_string();
+            if let Err(e) = state.try_send(target, Message::Text((&event_text).into())) {
                 counter!(telemetry::SIGNALING_ERRORS_TOTAL, "kind" => "relay_send").increment(1);
-                error!("error sending to {peer_id:?}: {e:?}");
+                error!("error sending to {target:?}: {e:?}");
             } else {
-                info!("{peer_id} -> {event_text:?}");
+                info!("{target} -> {event_text:?}");
+            }
+        };
+        for other_id in peers {
+            let other_relay = state
+                .get_peer(&other_id)
+                .map(|p| p.is_relay)
+                .unwrap_or(false);
+            if is_relay || other_relay {
+                // At least one side cannot do WebRTC
+                counter!(telemetry::MATCHES_RELAY_TOTAL).increment(1);
+                announce(other_id, JsonPeerEvent::NewRelayPeer(peer_id));
+                announce(peer_id, JsonPeerEvent::NewRelayPeer(other_id));
+            } else {
+                announce(other_id, JsonPeerEvent::NewPeer(peer_id));
             }
         }
 
@@ -77,6 +92,15 @@ impl SignalingTopology<NoCallbacks, ServerState> for MatchmakingDemoTopology {
 
             match request {
                 PeerRequest::Signal { receiver, data } => {
+                    let kind = data
+                        .as_object()
+                        .and_then(|o| o.keys().next().cloned())
+                        .unwrap_or_else(|| "?".to_string());
+                    if kind == "Relay" {
+                        debug!("{peer_id} -> {receiver}: relayed packet");
+                    } else {
+                        debug!("{peer_id} -> {receiver}: {kind} signal");
+                    }
                     let event = Message::Text(
                         JsonPeerEvent::Signal {
                             sender: peer_id,
@@ -182,8 +206,13 @@ mod tests {
                     .query_params
                     .get("next")
                     .and_then(|next| next.parse::<usize>().ok());
+                let is_relay = connection
+                    .query_params
+                    .get("relay")
+                    .map(|v| v == "1" || v == "true")
+                    .unwrap_or(false);
                 let room = RequestedRoom { id: room_id, next };
-                state.add_waiting_client(connection.origin, room);
+                state.add_waiting_client(connection.origin, room, is_relay);
                 Ok(true)
             }
         })
@@ -336,6 +365,68 @@ mod tests {
             JsonPeerEvent::Signal {
                 data: serde_json::Value::String("123".to_string()),
                 sender: a_uuid,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn relay_pair_is_announced_to_both_sides() {
+        let mut server = app();
+        let addr = server.bind().unwrap();
+        tokio::spawn(server.serve());
+
+        let (mut client_a, _response) =
+            tokio_tungstenite::connect_async(format!("ws://{addr}/random?next=2&relay=1"))
+                .await
+                .unwrap();
+        let a_uuid = get_peer_id(recv_peer_event(&mut client_a).await);
+
+        let (mut client_b, _response) =
+            tokio_tungstenite::connect_async(format!("ws://{addr}/random?next=2"))
+                .await
+                .unwrap();
+        let b_uuid = get_peer_id(recv_peer_event(&mut client_b).await);
+
+        assert_eq!(
+            recv_peer_event(&mut client_a).await,
+            JsonPeerEvent::NewRelayPeer(b_uuid)
+        );
+        assert_eq!(
+            recv_peer_event(&mut client_b).await,
+            JsonPeerEvent::NewRelayPeer(a_uuid)
+        );
+
+        let (mut client_c, _response) =
+            tokio_tungstenite::connect_async(format!("ws://{addr}/other?next=2"))
+                .await
+                .unwrap();
+        let c_uuid = get_peer_id(recv_peer_event(&mut client_c).await);
+        let (mut client_d, _response) =
+            tokio_tungstenite::connect_async(format!("ws://{addr}/other?next=2&relay=1"))
+                .await
+                .unwrap();
+        let d_uuid = get_peer_id(recv_peer_event(&mut client_d).await);
+        assert_eq!(
+            recv_peer_event(&mut client_c).await,
+            JsonPeerEvent::NewRelayPeer(d_uuid)
+        );
+        assert_eq!(
+            recv_peer_event(&mut client_d).await,
+            JsonPeerEvent::NewRelayPeer(c_uuid)
+        );
+
+        _ = client_a
+            .send(Message::text(format!(
+                "{{\"Signal\": {{\"receiver\": \"{}\", \"data\": {{\"Relay\": {{\"channel\": 0, \"data\": [1, 2, 3]}}}} }}}}",
+                b_uuid.0
+            )))
+            .await;
+        let signal = recv_peer_event(&mut client_b).await;
+        assert_eq!(
+            signal,
+            JsonPeerEvent::Signal {
+                sender: a_uuid,
+                data: serde_json::json!({"Relay": {"channel": 0, "data": [1, 2, 3]}}),
             }
         );
     }

@@ -22,7 +22,12 @@ pub(crate) use socket::MessageLoopChannels;
 pub use socket::{
     ChannelConfig, PeerState, RtcIceServerConfig, WebRtcChannel, WebRtcSocket, WebRtcSocketBuilder,
 };
-use std::{collections::HashMap, pin::Pin, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    pin::Pin,
+    sync::Arc,
+    time::Duration,
+};
 
 cfg_if! {
     if #[cfg(target_arch = "wasm32")] {
@@ -193,6 +198,7 @@ async fn message_loop<M: Messenger>(
     let mut peer_loops = FuturesUnordered::new();
     let mut handshake_signals = HashMap::new();
     let mut data_channels = HashMap::new();
+    let mut relay_peers: HashSet<PeerId> = HashSet::new();
     let mut id_tx = Option::Some(id_tx);
 
     let mut timeout = if let Some(interval) = keep_alive_interval {
@@ -240,10 +246,33 @@ async fn message_loop<M: Messenger>(
                             let signal_peer = SignalPeer::new(peer_uuid, requests_sender.clone());
                             handshakes.push(M::offer_handshake(signal_peer, signal_rx, messages_from_peers_tx.clone(), ice_server_config, channel_configs))
                         },
+                        PeerEvent::NewRelayPeer(peer_uuid) => {
+                            debug!("relay peer {peer_uuid}: connected without handshake");
+                            relay_peers.insert(peer_uuid);
+                            if peer_state_tx.unbounded_send((peer_uuid, PeerState::Connected)).is_err() {
+                                break Ok(());
+                            }
+                        },
                         PeerEvent::PeerLeft(peer_uuid) => {
+                            relay_peers.remove(&peer_uuid);
                             if peer_state_tx.unbounded_send((peer_uuid, PeerState::Disconnected)).is_err() {
                                 // socket dropped, exit cleanly
                                 break Ok(());
+                            }
+                        },
+                        PeerEvent::Signal { sender, data: PeerSignal::Relay { channel, data } } => {
+                            if relay_peers.insert(sender) {
+                                if peer_state_tx.unbounded_send((sender, PeerState::Connected)).is_err() {
+                                    break Ok(());
+                                }
+                            }
+                            match messages_from_peers_tx.get(channel) {
+                                Some(tx) => {
+                                    if tx.unbounded_send((sender, data.into_boxed_slice())).is_err() {
+                                        break Ok(());
+                                    }
+                                }
+                                None => warn!("relay packet from {sender} for unknown channel {channel}"),
                             }
                         },
                         PeerEvent::Signal { sender, data } => {
@@ -281,6 +310,15 @@ async fn message_loop<M: Messenger>(
 
             message = next_peer_message_out => {
                 match message {
+                    Some((channel_index, Some((peer, packet)))) if relay_peers.contains(&peer) => {
+                        let request = PeerRequest::Signal {
+                            receiver: peer,
+                            data: PeerSignal::Relay { channel: channel_index, data: packet.to_vec() },
+                        };
+                        if requests_sender.unbounded_send(request).is_err() {
+                            break Ok(());
+                        }
+                    }
                     Some((channel_index, Some((peer, packet)))) => {
                         let data_channel = data_channels
                             .get_mut(&peer)

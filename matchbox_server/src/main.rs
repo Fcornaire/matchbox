@@ -66,8 +66,13 @@ async fn main() {
                 .query_params
                 .get("next")
                 .and_then(|next| next.parse::<usize>().ok());
+            let is_relay = connection
+                .query_params
+                .get("relay")
+                .map(|v| v == "1" || v == "true")
+                .unwrap_or(false);
             let room = RequestedRoom { id: room_id, next };
-            state.add_waiting_client(connection.origin, room);
+            state.add_waiting_client(connection.origin, room, is_relay);
             Ok(true) // allow all clients
         }
     })

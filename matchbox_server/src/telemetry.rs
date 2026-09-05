@@ -13,6 +13,7 @@ pub const ROOMS: &str = "bvs_rooms";
 pub const CLIENTS_IN_QUEUE: &str = "bvs_clients_in_queue";
 pub const MATCHED_GROUPS: &str = "bvs_matched_groups";
 pub const MATCHES_TOTAL: &str = "bvs_matches_total";
+pub const MATCHES_RELAY_TOTAL: &str = "bvs_matches_relay_total";
 pub const SIGNALING_ERRORS_TOTAL: &str = "bvs_signaling_errors_total";
 pub const CONNECTION_DURATION_SECONDS: &str = "bvs_connection_duration_seconds";
 
@@ -44,6 +45,7 @@ pub fn install() -> PrometheusHandle {
         "Peer groups matched via ?next= still connected"
     );
     describe_counter!(MATCHES_TOTAL, "Peer groups completed via ?next=");
+    describe_counter!(MATCHES_RELAY_TOTAL, "Peer groups completed via ?next= with a relay peer");
     describe_counter!(SIGNALING_ERRORS_TOTAL, "Signaling failures, by kind");
     describe_histogram!(
         CONNECTION_DURATION_SECONDS,

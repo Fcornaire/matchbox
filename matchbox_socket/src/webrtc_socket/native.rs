@@ -192,6 +192,9 @@ impl Messenger for NativeMessenger {
                     PeerSignal::IceCandidate(_) => {
                         warn!("Got an unexpected IceCandidate, while waiting for Answer. Ignoring.")
                     }
+                    PeerSignal::Relay { .. } => {
+                        warn!("Got a relay packet while waiting for Answer. Ignoring.")
+                    }
                 };
             };
 
@@ -455,6 +458,9 @@ impl CandidateTrickle {
                 }
                 PeerSignal::Answer(_) => {
                     warn!("Got an unexpected Answer, while waiting for IceCandidate. Ignoring.")
+                }
+                PeerSignal::Relay { .. } => {
+                    warn!("Got a relay packet while waiting for IceCandidate. Ignoring.")
                 }
             }
         }

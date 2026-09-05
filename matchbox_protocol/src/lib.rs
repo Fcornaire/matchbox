@@ -25,6 +25,8 @@ pub enum PeerEvent<S: Clone> {
     IdAssigned(PeerId),
     /// Includes the PeerId for the connecting remote peer.
     NewPeer(PeerId),
+    /// Includes the PeerId of a remote peer that can only be reached through the signaling server
+    NewRelayPeer(PeerId),
     PeerLeft(PeerId),
     Signal {
         sender: PeerId,
